@@ -27,12 +27,6 @@ jobs:
       - name: Checkout CI repo (contains build-and-package.sh + node_scripts/)
         uses: actions/checkout@v4
 
-      - name: Use Node.js (SPFx-compatible)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '16'
-          cache: 'npm'
-
       - name: Receive zip (URL or base64) and extract (optional)
         env:
           ZIP_URL: ${{ inputs.zip_url || github.event.client_payload.zip_url }}
@@ -63,6 +57,12 @@ jobs:
           test -f ./build-and-package.sh || (echo "build-and-package.sh missing" && exit 1)
           test -f ./node_scripts/bundle-webpart-assets.js || (echo "node_scripts/bundle-webpart-assets.js missing" && exit 1)
           chmod +x ./build-and-package.sh
+
+      - name: Use Node.js (SPFx-compatible)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
 
       - name: Install project dependencies
         run: |
