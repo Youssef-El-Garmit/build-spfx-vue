@@ -1,0 +1,93 @@
+name: NodeJS with Gulp (SPFx + HTTP Zip)
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: 'HTTP(S) URL to the project .zip'
+        required: false
+      zip_b64:
+        description: 'Base64-encoded project .zip'
+        required: false
+      zip_name:
+        description: 'Filename to save the zip as'
+        required: false
+        default: project.zip
+  repository_dispatch:
+    types: [build-from-zip]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout CI repo (contains build-and-package.sh + node_scripts/)
+        uses: actions/checkout@v4
+
+      - name: Use Node.js (SPFx-compatible)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '16'
+          cache: 'npm'
+
+      - name: Receive zip (URL or base64) and extract (optional)
+        env:
+          ZIP_URL: ${{ inputs.zip_url || github.event.client_payload.zip_url }}
+          ZIP_B64: ${{ inputs.zip_b64 || github.event.client_payload.zip_b64 }}
+          ZIP_NAME: ${{ inputs.zip_name || github.event.client_payload.zip_name || 'project.zip' }}
+        run: |
+          set -euo pipefail
+          if [ -n "${ZIP_B64:-}" ]; then
+            echo "Writing zip from base64 payload..."
+            echo "$ZIP_B64" | base64 -d > "$ZIP_NAME"
+          elif [ -n "${ZIP_URL:-}" ]; then
+            echo "Downloading zip from $ZIP_URL ..."
+            curl -L --fail --retry 3 "$ZIP_URL" -o "$ZIP_NAME"
+          else
+            echo "No zip provided; will use repo contents."
+          fi
+
+          if [ -f "$ZIP_NAME" ]; then
+            echo "Extracting $ZIP_NAME ..."
+            unzip -q "$ZIP_NAME" -d ./extracted-project
+            shopt -s dotglob nullglob
+            rsync -a --exclude '.git' --exclude '.github' ./extracted-project/ ./
+            shopt -u dotglob
+          fi
+
+      - name: Ensure build scripts exist
+        run: |
+          test -f ./build-and-package.sh || (echo "build-and-package.sh missing" && exit 1)
+          test -f ./node_scripts/bundle-webpart-assets.js || (echo "node_scripts/bundle-webpart-assets.js missing" && exit 1)
+          chmod +x ./build-and-package.sh
+
+      - name: Install project dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Add SPFx dependencies (align with your script)
+        run: |
+          npm install --save-dev @microsoft/sp-build-web@1.20.2 @microsoft/rush-stack-compiler-4.7@0.1.1
+          npm install --save @microsoft/sp-core-library@1.10.0 \
+                               @microsoft/sp-lodash-subset@1.10.0 \
+                               @microsoft/sp-property-pane@1.10.0 \
+                               @microsoft/sp-webpart-base@1.10.0 \
+                               @microsoft/sp-office-ui-fabric-core@1.10.0
+
+      - name: Build / Bundle / Package (gulp inside your script)
+        run: ./build-and-package.sh
+
+      - name: Upload SPFx package
+        uses: actions/upload-artifact@v4
+        with:
+          name: spfx-package
+          path: webpart/sharepoint/solution/*.sppkg
+          if-no-files-found: error
+          compression-level: 0
